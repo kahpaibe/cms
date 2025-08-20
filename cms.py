@@ -12,7 +12,7 @@ from bs4 import BeautifulSoup, NavigableString
 from functools import partial
 
 from db_structs import Circle, is_to_add, Medium, Source, ReliabilityTypes, OriginTypes
-from cms_lib import KahLogger, try_find_all_else_empty, try_find_else_none, decode_if_possible, callback_image_save
+from cms_lib import KahLogger, try_find_all_else_empty_get_dict, try_find_all_else_empty_get_text, try_find_else_none, decode_if_possible, callback_image_save
 from kahscrape.kahscrape import KahRatelimitedFetcher, FetcherABC
 
 # =========== General setup ===========
@@ -65,7 +65,7 @@ if True:
                 await onerr(str(resp.url), Exception("No Circle name found, invalid circle xml!"), resp, data)
                 return
             circle_name = circle_name_tag.get_text(strip=True) if circle_name_tag else None
-            circle_pen_names = try_find_all_else_empty(circle_tag, '執筆者名')
+            circle_pen_names = try_find_all_else_empty_get_text(circle_tag, '執筆者名')
             circle_space = try_find_else_none(circle_tag, '配置スペース')
 
             curls = []
@@ -87,36 +87,33 @@ if True:
             if circle_niconico:
                 curls.append(circle_niconico)
 
-            circle_tags = try_find_all_else_empty(circle_tag, 'タグ')
-            circle_genre = try_find_else_none(circle_tag, 'ジャンル')
+            circle_tags = try_find_all_else_empty_get_dict(circle_tag, 'タグ')
+            circle_genre = try_find_else_none(circle_tag, 'ジャンル名')
             circle_cut = try_find_else_none(circle_tag, '申込用画像')
             circle_cut_web = try_find_else_none(circle_tag, 'Webカタログ用画像')
-            circle_promotional_video = try_find_all_else_empty(circle_tag, '宣伝用動画')
-            circle_goods = try_find_all_else_empty(circle_tag, '頒布物') + try_find_all_else_empty(circle_tag, 'その他頒布物')
+            circle_promotional_video = try_find_all_else_empty_get_text(circle_tag, '宣伝用動画')
+            circle_goods = try_find_all_else_empty_get_text(circle_tag, '頒布物') + try_find_all_else_empty_get_text(circle_tag, 'その他頒布物')
             circle_images = circle_tag.find_all('新着画像') # TODO: fetch images
-            
-            
-            # 宣伝用Url[サービス名*="ニコニコ"] TODO ?
+            circle_email = try_find_else_none(circle_tag, "公開メールアドレス")    
+            circle_promotional_images = try_find_all_else_empty_get_text(circle_tag, '宣伝用画像')    
 
             circle_description = try_find_else_none(circle_tag, '補足説明')
 
             comments_args = []
             if is_to_add(circle_tags):
-                comments_args.append(f"Tags: {', '.join(circle_tags)}")
+                comments_args.append(f"Tags: {', '.join(tag['名称'].strip() for tag in circle_tags)}") # TODO: to parse
             if is_to_add(circle_genre):
                 comments_args.append(f"Genre: {circle_genre}")
-            # if is_to_add(circle_cut):
-            #     comments += f"Cut Image: {circle_cut}\n"
-            # if is_to_add(circle_cut_web):
-            #     comments += f"Web Catalog Cut Image: {circle_cut_web}\n"
             if is_to_add(circle_promotional_video):
                 comments_args.append(f"Promotional Video: {', '.join(circle_promotional_video)}")
+            if is_to_add(circle_promotional_video):
+                comments_args.append(f"Promotional Images: {', '.join(circle_promotional_images)}")
             if is_to_add(circle_goods):
-                comments_args.append(f"Goods: {', '.join(circle_goods)}")
-            # if is_to_add(circle_images):
-            #     comments += f"Images: {', '.join(circle_images)}\n"
+                comments_args.append(f"Goods: {', '.join(circle_goods)}") #TODO: to parse
             if is_to_add(circle_description):
                 comments_args.append(f"Description: {circle_description}")
+            if is_to_add(circle_email):
+                comments_args.append(f"Email: {circle_email}")
 
             media: list[Medium] = []
             if circle_cut:
@@ -136,9 +133,64 @@ if True:
                 )
                 media.append(Medium(f"cut_web_images/{circle_cut_web}",
                                     [Source(f"https://webcatalog-archives.circle.ms/c83/view/detail.html?id={circle_id}", (ReliabilityTypes.Reliable, OriginTypes.Official))]))
-
+            
             if circle_images:
-                logger.critical(f"Images: {circle_images}")
+                for i, image_tag in enumerate(circle_images):
+                    img_title = image_tag["タイトル"]
+                    img_url = image_tag["画像Url"]
+                    img_source_link = image_tag["リンク先Url"]
+                    img_date = image_tag["投稿日時"]
+                    img_format = re.search(r"\.([^\.]*)$", img_url).group(1)
+                    
+                    out_path = OUT_83_FOLDER / f"circle_images/{circle_id}_{i}.{img_format}"
+                    out_path.parent.mkdir(parents=True, exist_ok=True)
+                    await fetcher.fetch(
+                        img_url,
+                        partial(callback_image_save, logger=logger, save_file_path=out_path),
+                        onerr
+                    )
+                    media.append(Medium(f"circle_images/{circle_id}_{i}.{img_format}",
+                                        [Source(img_source_link, (ReliabilityTypes.Reliable, OriginTypes.Official)),
+                                         Source(f"Event circle page: https://webcatalog-archives.circle.ms/c83/view/detail.html?id={circle_id}", (ReliabilityTypes.Reliable, OriginTypes.Official)),
+                                         Source(f"Fetch url: {img_url}", (ReliabilityTypes.Reliable, OriginTypes.Official))],
+                                        comments=f'Note: link could have been dead and thus image not downloaded\nDate: {img_date}, Title: {img_title}'))
+                
+
+            if True:# ==== Finding missing fields ====
+                from bs4 import PageElement
+                all_tags = list(circle_tag.children)
+                def remove_tag(all_tags_source: list[PageElement], tag_name: str) -> None:
+                    """Remove given tag with tag_name from all_tags"""
+                    all_tags_source[:] = [tag for tag in all_tags_source if tag.name != tag_name]
+                    all_tags_source[:] = [tag for tag in all_tags_source if tag != tag_name]
+                remove_tag(all_tags, "\n")
+                remove_tag(all_tags, "サークル名")
+                remove_tag(all_tags, "執筆者名")
+                remove_tag(all_tags, "配置スペース")
+                remove_tag(all_tags, "Webサイト")
+                remove_tag(all_tags, "通販サイト")
+                remove_tag(all_tags, "TwitterId")
+                remove_tag(all_tags, "pixivId")
+                remove_tag(all_tags, "niconicoId")
+                remove_tag(all_tags, "タグ")
+                remove_tag(all_tags, "ジャンル名")
+                remove_tag(all_tags, "申込用画像")
+                remove_tag(all_tags, "Webカタログ用画像")
+                remove_tag(all_tags, "宣伝用動画")
+                remove_tag(all_tags, "頒布物")
+                remove_tag(all_tags, "新着画像")
+                remove_tag(all_tags, "補足説明")
+                remove_tag(all_tags, "公開メールアドレス")
+                remove_tag(all_tags, "宣伝用画像")
+                remove_tag(all_tags, "その他頒布物")
+                
+                if all_tags: # At least one field not supported
+                    logger.critical(f"Unsupported fields {circle_id=}: {all_tags=}")
+                    exit() # Interrupt process
+
+            if True: # ==== processing fields with media ====
+                pass
+                # TODO: verify fields such as 'Promotional Images:' have examples
 
             circle = Circle(
                 aliases=[circle_name] if circle_name else [],
@@ -149,7 +201,7 @@ if True:
                 comments="\n".join(comments_args) if is_to_add(comments_args) else None
             )
 
-            out_path = OUT_83_FOLDER / f"circle_{circle_id}.json"
+            out_path = OUT_83_FOLDER / "circle_jsons" / f"circle_{circle_id}.json"
             out_path.parent.mkdir(parents=True, exist_ok=True)
             async with aiofiles.open(out_path, "w+", encoding='utf-8') as f:
                 await f.write(json.dumps(circle.get_json(), ensure_ascii=False, indent=4))
@@ -168,7 +220,7 @@ if True:
             circles = content.find_all("Circle")
             logger.debug(f"Found {len(circles)} circles in {resp.url}")
 
-            for circle in circles:
+            for i, circle in enumerate(circles):
                 cid = circle.get('公開サークルId')
 
                 circle_xml_url = f"https://webcatalog-archives.circle.ms/c83/xml/{cid}.xml"
@@ -177,10 +229,8 @@ if True:
                     onreq_xmlcircle,
                     onerr
                 )
-                if i > 1:  # @@@@@@@@@@@@@@@@@@@@@@@@
-                    break
 
-            out_path = OUT_83_FOLDER / f"{day_page}.xml"
+            out_path = OUT_83_FOLDER / "catalog_pages" / f"{day_page}.xml"
             out_path.parent.mkdir(parents=True, exist_ok=True)
             async with aiofiles.open(out_path, "wb+") as f:
                 await f.write(data)
@@ -195,9 +245,6 @@ if True:
                 onreq_xmlcutlist,
                 onerr
             )
-            break
-            if i > 1:  # @@@@@@@@@@@@@@@@@@@@@@@@
-                break
         
         await fetcher.wait_and_close()
 

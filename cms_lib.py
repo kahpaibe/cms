@@ -7,6 +7,7 @@ from pathlib import Path
 from bs4 import Tag
 from kahscrape.kahscrape import FetcherABC
 from aiohttp import ClientResponse
+from typing import Optional
 
 def try_find_else_none(content: Tag, name: str) -> str | None:
     tag = content.find(name)
@@ -14,11 +15,21 @@ def try_find_else_none(content: Tag, name: str) -> str | None:
         return None
     return tag.get_text(strip=True)
 
-def try_find_all_else_empty(content: Tag, name: str) -> list[str]:
+def try_find_all_else_empty_get_text(content: Tag, name: str) -> list[str]:
     tags = content.find_all(name)
     if not tags:
         return []
     return [tag.get_text(strip=True) for tag in tags if isinstance(tag, Tag)]
+
+def try_find_all_else_empty_get_dict(content: Tag, name: str) -> list[dict[str, str]]:
+    tags = content.find_all(name)
+    if not tags:
+        return []
+    out_list = []
+    for tag in tags:
+        tag_dict = tag.attrs.copy()
+        out_list.append(tag_dict)
+    return out_list
 
 def decode_if_possible(data: bytes) -> str:
     try:
@@ -62,7 +73,7 @@ class KahLogger(logging.Logger):
 
         # Create a file handler and set the log level
         path.parent.mkdir(parents=True, exist_ok=True)
-        file_handler = logging.FileHandler(path)
+        file_handler = logging.FileHandler(path, encoding="utf-8")
         file_handler.setLevel(level_file)
         
         # Create a console handler and set the log level
