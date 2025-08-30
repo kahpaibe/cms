@@ -7,45 +7,11 @@ from pathlib import Path
 from bs4 import Tag
 from kahscrape.kahscrape import FetcherABC
 from aiohttp import ClientResponse
-from typing import Optional
+import re
 
-def try_find_else_none(content: Tag, name: str) -> str | None:
-    tag = content.find(name)
-    if tag is None or isinstance(tag, int):
-        return None
-    return tag.get_text(strip=True)
-
-def try_find_all_else_empty_get_text(content: Tag, name: str) -> list[str]:
-    tags = content.find_all(name)
-    if not tags:
-        return []
-    return [tag.get_text(strip=True) for tag in tags if isinstance(tag, Tag)]
-
-def try_find_all_else_empty_get_dict(content: Tag, name: str) -> list[dict[str, str]]:
-    tags = content.find_all(name)
-    if not tags:
-        return []
-    out_list = []
-    for tag in tags:
-        tag_dict = tag.attrs.copy()
-        out_list.append(tag_dict)
-    return out_list
-
-def decode_if_possible(data: bytes) -> str:
-    try:
-        return data.decode('utf-8')
-    except UnicodeDecodeError:
-        try:
-            return data.decode('shift-jis')
-        except UnicodeDecodeError:
-            try:
-                return data.decode('big5')
-            except UnicodeDecodeError:
-                try:
-                    return data.decode('gbk')
-                except UnicodeDecodeError:
-                    pass
-    return str(data)
+def redirect_url(url: str) -> str:
+    """Replace given url to take into account manually-defined new urls"""
+    return url
 
 class KahLogger(logging.Logger):
     """Logger to log to given file and to console. Will add color to console logs."""
@@ -66,7 +32,7 @@ class KahLogger(logging.Logger):
             log_message = super().format(record)
             msg_args = log_message.split("\n")
             # Apply color to "CONSOLE:" prefix
-            return f"{col}{msg_args[0]}{rst}\n{msg_args[1:]}" if len(msg_args) > 1 else f"{col}{log_message}{rst}"
+            return f"{col}{msg_args[0]}{rst}\n{'\n'.join(msg_args[1:])}" if len(msg_args) > 1 else f"{col}{log_message}{rst}"
         
     def __init__(self, name: str, path: Path, level_file: int = logging.INFO, level_console: int = logging.INFO) -> None:
         super().__init__(name, max(level_console, level_file))
@@ -101,3 +67,41 @@ async def callback_image_save(fetcher: FetcherABC, resp: ClientResponse, data: b
         await f.write(data)
     
     logger.debug(f"Saved image to {save_file_path}")
+
+def decode_if_possible(data: bytes) -> str:
+    try:
+        return data.decode('utf-8')
+    except UnicodeDecodeError:
+        try:
+            return data.decode('shift-jis')
+        except UnicodeDecodeError:
+            try:
+                return data.decode('big5')
+            except UnicodeDecodeError:
+                try:
+                    return data.decode('gbk')
+                except UnicodeDecodeError:
+                    pass
+    return str(data)
+
+def try_find_else_none(content: Tag, name: str) -> str | None:
+    tag = content.find(name)
+    if tag is None or isinstance(tag, int):
+        return None
+    return tag.get_text(strip=True)
+
+def try_find_all_else_empty_get_text(content: Tag, name: str) -> list[str]:
+    tags = content.find_all(name)
+    if not tags:
+        return []
+    return [tag.get_text(strip=True) for tag in tags if isinstance(tag, Tag)]
+
+def try_find_all_else_empty_get_dict(content: Tag, name: str) -> list[dict[str, str]]:
+    tags = content.find_all(name)
+    if not tags:
+        return []
+    out_list = []
+    for tag in tags:
+        tag_dict = tag.attrs.copy()
+        out_list.append(tag_dict)
+    return out_list
