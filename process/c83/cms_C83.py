@@ -86,6 +86,8 @@ async def onreq_xmlcircle(fetcher: FetcherABC, resp: ClientResponse, data: bytes
     circle_name = circle_name_tag.get_text(strip=True) if circle_name_tag else None
     circle_pen_names = try_find_all_else_empty_get_text(circle_tag, '執筆者名')
     circle_space = try_find_else_none(circle_tag, '配置スペース')
+    if circle_space == "抽選洩れ":
+        circle_space = "抽選洩れ (Failed lottery)"
 
     curls = []
     for site_tag in circle_tag.find_all('Webサイト'):
@@ -338,10 +340,10 @@ if __name__ == '__main__':
             f"https://webcatalog-archives.circle.ms/c83/xmlcutlist/day1page{i:04d}.xml" 
             for i in range(1, 2 + 1)
         )
-        # xmlcutlist_urls = (
-        #     f"https://webcatalog-archives.circle.ms/c83/xmlcutlist/day1page{i:04d}.xml" 
-        #     for i in range(1, 185 + 1)
-        # )
+        xmlcutlist_urls = (
+            f"https://webcatalog-archives.circle.ms/c83/xmlcutlist/day1page{i:04d}.xml" 
+            for i in range(1, 185 + 1)
+        )
         for i, url in enumerate(xmlcutlist_urls):
             await fetcher.fetch(
                 url,
@@ -349,29 +351,41 @@ if __name__ == '__main__':
                 onerr
             )
         
-        # # === Day 2 ===*
-        # xmlcutlist_urls = (
-        #     f"https://webcatalog-archives.circle.ms/c83/xmlcutlist/day2page{i:04d}.xml" 
-        #     for i in range(1, 183 + 1)
-        # )
-        # for i, url in enumerate(xmlcutlist_urls):
-        #     await fetcher.fetch(
-        #         url,
-        #         onreq_xmlcutlist,
-        #         onerr
-        #     )
+        # === Day 2 ===*
+        xmlcutlist_urls = (
+            f"https://webcatalog-archives.circle.ms/c83/xmlcutlist/day2page{i:04d}.xml" 
+            for i in range(1, 183 + 1)
+        )
+        for i, url in enumerate(xmlcutlist_urls):
+            await fetcher.fetch(
+                url,
+                onreq_xmlcutlist,
+                onerr
+            )
 
-        # # === Day 3 ===*
-        # xmlcutlist_urls = (
-        #     f"https://webcatalog-archives.circle.ms/c83/xmlcutlist/day3page{i:04d}.xml" 
-        #     for i in range(1, 180 + 1)
-        # )
-        # for i, url in enumerate(xmlcutlist_urls):
-        #     await fetcher.fetch(
-        #         url,
-        #         onreq_xmlcutlist,
-        #         onerr
-        #     )
+        # === Day 3 ===*
+        xmlcutlist_urls = (
+            f"https://webcatalog-archives.circle.ms/c83/xmlcutlist/day3page{i:04d}.xml" 
+            for i in range(1, 180 + 1)
+        )
+        for i, url in enumerate(xmlcutlist_urls):
+            await fetcher.fetch(
+                url,
+                onreq_xmlcutlist,
+                onerr
+            )
+
+        # === Failed lottery ===
+        xmlcutlist_urls = (
+            f"https://webcatalog-archives.circle.ms/c83/xmlcutlist/day99page{i:04d}.xml" 
+            for i in range(1, 112 + 1)
+        )
+        for i, url in enumerate(xmlcutlist_urls):
+            await fetcher.fetch(
+                url,
+                onreq_xmlcutlist,
+                onerr
+            )
         
         await fetcher.wait_and_close()
 
