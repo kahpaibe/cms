@@ -8,6 +8,8 @@ from pathlib import Path
 from aiohttp import ClientResponse
 from bs4 import BeautifulSoup, NavigableString
 from functools import partial
+from cms_skip import KahSkipManager
+from typing import Optional
 
 from db_structs import Circle, is_to_add, Medium, Source, ReliabilityTypes, OriginTypes
 from cms_lib import KahLogger, try_find_all_else_empty_get_dict, try_find_all_else_empty_get_text, try_find_else_none, decode_if_possible, callback_image_save, redirect_url
@@ -21,9 +23,12 @@ EVENT: str = "c83"
 PATH_CURRENT = Path(__file__).parent
 PATH_OUTPUT = PATH_CURRENT / "output"
 PATH_LOG = PATH_OUTPUT / "logger.log"
+PATH_DOWNLOADED_INDEX = PATH_OUTPUT / "downloaded_index.txt"
  
 
 LOGGER = KahLogger(EVENT, PATH_LOG, logging.DEBUG, logging.INFO)
+
+skipper = KahSkipManager(PATH_DOWNLOADED_INDEX, logger=LOGGER)
 
 # == Get cookies ==
 with open(PATH_CURRENT / "cookies.json", "r", encoding='utf-8') as f:
@@ -133,25 +138,61 @@ async def onreq_xmlcircle(fetcher: FetcherABC, resp: ClientResponse, data: bytes
 
     media: list[Medium] = []
     if circle_cut:
+        out_path = PATH_OUTPUT / "cut_images" / f"{circle_cut}"
+        is_external_medium = True
         _url = redirect_url(f"https://webcatalog-archives.circle.ms/c83/imgthm/{circle_cut}")
-        await fetcher.fetch(
-            _url,
-            partial(callback_image_save, save_file_path=PATH_OUTPUT / "cut_images" / f"{circle_cut}", logger=LOGGER),
-            onerr
-        )
-        media.append(Medium(f"cut_images/{circle_cut}",
-                            [Source(f"https://webcatalog-archives.circle.ms/c83/view/detail.html?id={circle_id}", (ReliabilityTypes.Reliable, OriginTypes.Official))]))
-
+        ret = skipper.should_skip_url(_url) # Skip if already downloaded
+        if ret is not None:
+            LOGGER.info(f"Skipping fetching {_url}: {ret}")
+            # check if exists
+            if out_path.exists():
+                is_external_medium = False
+        else:
+            out = await fetcher.fetch_now(
+                _url,
+                onerr
+            )
+            if out is not None: # Got image, manually run callback because fetch_now was used
+                resp_buffer, data = out
+                is_external_medium = False
+                await callback_image_save(fetcher, resp_buffer, data, save_file_path=out_path, logger=LOGGER)
+            else: # Add as external medium
+                LOGGER.warning(f"Failed to fetch image {_url} for circle {circle_id=}, skipping saving it.")
+        if is_external_medium:
+            media.append(Medium(f"cut_images/{circle_cut}",
+                                [Source(f"https://webcatalog-archives.circle.ms/c83/view/detail.html?id={circle_id}", (ReliabilityTypes.Reliable, OriginTypes.Official))]))
+        else:
+            media.append(Medium(f"{_url}",
+                                [Source(f"https://webcatalog-archives.circle.ms/c83/view/detail.html?id={circle_id}", (ReliabilityTypes.Reliable, OriginTypes.Official))]))
+                
     if circle_cut_web:
+        out_path = PATH_OUTPUT / "cut_web_images" / f"{circle_cut_web}"
+        is_external_medium = True
         _url = redirect_url(f"https://webcatalog-archives.circle.ms/c83/imgthm/{circle_cut_web}")
-        await fetcher.fetch(
-            _url,
-            partial(callback_image_save, save_file_path=PATH_OUTPUT / "cut_web_images" / f"{circle_cut_web}", logger=LOGGER),
-            onerr
-        )
-        media.append(Medium(f"cut_web_images/{circle_cut_web}",
-                            [Source(f"https://webcatalog-archives.circle.ms/c83/view/detail.html?id={circle_id}", (ReliabilityTypes.Reliable, OriginTypes.Official))]))
-    
+        ret = skipper.should_skip_url(_url) # Skip if already downloaded
+        if ret is not None:
+            LOGGER.info(f"Skipping fetching {_url}: {ret}")
+            # check if exists
+            if out_path.exists():
+                is_external_medium = False
+        else:
+            out = await fetcher.fetch_now(
+                _url,
+                onerr
+            )
+            if out is not None: # Got image, manually run callback because fetch_now was used
+                resp_buffer, data = out
+                is_external_medium = False
+                await callback_image_save(fetcher, resp_buffer, data, save_file_path=out_path, logger=LOGGER)
+            else: # Add as external medium
+                LOGGER.warning(f"Failed to fetch image {_url} for circle {circle_id=}, skipping saving it.")
+        if is_external_medium:
+            media.append(Medium(f"cut_web_images/{circle_cut_web}",
+                                [Source(f"https://webcatalog-archives.circle.ms/c83/view/detail.html?id={circle_id}", (ReliabilityTypes.Reliable, OriginTypes.Official))]))
+        else:
+            media.append(Medium(f"{_url}",
+                                [Source(f"https://webcatalog-archives.circle.ms/c83/view/detail.html?id={circle_id}", (ReliabilityTypes.Reliable, OriginTypes.Official))]))
+                
     if circle_images:
         for i, image_tag in enumerate(circle_images):
             img_title = image_tag["タイトル"]
@@ -160,24 +201,38 @@ async def onreq_xmlcircle(fetcher: FetcherABC, resp: ClientResponse, data: bytes
             img_date = image_tag["投稿日時"]
             img_format = re.search(r"\.([^\.]*)$", img_url).group(1)
             
+            is_external_medium = True
             out_path = PATH_OUTPUT / f"circle_images/{circle_id}_{i}.{img_format}"
             out_path.parent.mkdir(parents=True, exist_ok=True)
-            media.append(Medium(f"circle_images/{circle_id}_{i}.{img_format}",
-                                [Source(img_source_link, (ReliabilityTypes.Reliable, OriginTypes.Official)),
-                                    Source(f"Event circle page: https://webcatalog-archives.circle.ms/c83/view/detail.html?id={circle_id}", (ReliabilityTypes.Reliable, OriginTypes.Official)),
-                                    Source(f"Fetch url: {img_url}", (ReliabilityTypes.Reliable, OriginTypes.Official))],
-                                comments=f'Note: link could have been dead and thus image not downloaded\nDate: {img_date}, Title: {img_title}'))
-
             _url = redirect_url(img_url)
-            out = await fetcher.fetch_now(
-                _url,
-                onerr
-            )
-            if out is not None: # Got image
-                resp_buffer, data = out
-                await callback_image_save(fetcher, resp_buffer, data, save_file_path=out_path, logger=LOGGER)
+            ret = skipper.should_skip_url(_url) # Skip if already downloaded
+            if ret is not None:
+                LOGGER.info(f"Skipping fetching {_url}: {ret}")
+                if out_path.exists():
+                    is_external_medium = False
             else:
-                LOGGER.warning(f"Failed to fetch image {img_url} for circle {circle_id=}, skipping saving it.")
+                out = await fetcher.fetch_now(
+                    _url,
+                    onerr
+                )
+                if out is not None: # Got image, manually run callback because fetch_now was used
+                    is_external_medium = False
+                    resp_buffer, data = out
+                    await callback_image_save(fetcher, resp_buffer, data, save_file_path=out_path, logger=LOGGER)
+                else:
+                    LOGGER.warning(f"Failed to fetch image {img_url} for circle {circle_id=}, skipping saving it.")
+            if is_external_medium:
+                media.append(Medium(f"{_url}",
+                                    [Source(img_source_link, (ReliabilityTypes.Reliable, OriginTypes.Official)),
+                                        Source(f"Event circle page: https://webcatalog-archives.circle.ms/c83/view/detail.html?id={circle_id}", (ReliabilityTypes.Reliable, OriginTypes.Official)),
+                                        Source(f"Fetch url: {img_url}", (ReliabilityTypes.Reliable, OriginTypes.Official))],
+                                    comments=f'Note: link could have been dead and thus image not downloaded\nDate: {img_date}, Title: {img_title}'))
+            else:
+                media.append(Medium(f"circle_images/{circle_id}_{i}.{img_format}",
+                                    [Source(img_source_link, (ReliabilityTypes.Reliable, OriginTypes.Official)),
+                                        Source(f"Event circle page: https://webcatalog-archives.circle.ms/c83/view/detail.html?id={circle_id}", (ReliabilityTypes.Reliable, OriginTypes.Official)),
+                                        Source(f"Fetch url: {img_url}", (ReliabilityTypes.Reliable, OriginTypes.Official))],
+                                    comments=f'Note: link could have been dead and thus image not downloaded\nDate: {img_date}, Title: {img_title}'))
 
     if True:# ==== Finding missing fields ====
         from bs4 import PageElement
@@ -252,7 +307,7 @@ async def onreq_xmlcutlist(fetcher: FetcherABC, resp: ClientResponse, data: byte
         cid = circle.get('公開サークルId')
 
         circle_xml_url = f"https://webcatalog-archives.circle.ms/c83/xml/{cid}.xml"
-        await fetcher.fetch(
+        await fetcher.fetch( # TODO: should skipper be used ? I would say no... or would need smarter skipper
             circle_xml_url,
             onreq_xmlcircle,
             onerr
@@ -274,46 +329,45 @@ if __name__ == '__main__':
         fetcher = await get_fetcher()
 
         # === Day 1 ===
-        if True:
-            xmlcutlist_urls = (
-                f"https://webcatalog-archives.circle.ms/c83/xmlcutlist/day1page{i:04d}.xml" 
-                for i in range(1, 185 + 1)
+        xmlcutlist_urls = (
+            f"https://webcatalog-archives.circle.ms/c83/xmlcutlist/day1page{i:04d}.xml" 
+            for i in range(1, 2 + 1)
+        )
+        # xmlcutlist_urls = (
+        #     f"https://webcatalog-archives.circle.ms/c83/xmlcutlist/day1page{i:04d}.xml" 
+        #     for i in range(1, 185 + 1)
+        # )
+        for i, url in enumerate(xmlcutlist_urls):
+            await fetcher.fetch(
+                url,
+                onreq_xmlcutlist,
+                onerr
             )
-            for i, url in enumerate(xmlcutlist_urls):
-                await fetcher.fetch(
-                    url,
-                    onreq_xmlcutlist,
-                    onerr
-                )
-                break
-            
-        # === Day 2 ===
-        if False:
-            xmlcutlist_urls = (
-                f"https://webcatalog-archives.circle.ms/c83/xmlcutlist/day2page{i:04d}.xml" 
-                for i in range(1, 183 + 1)
-            )
-            for i, url in enumerate(xmlcutlist_urls):
-                await fetcher.fetch(
-                    url,
-                    onreq_xmlcutlist,
-                    onerr
-                )
+        
+        # # === Day 2 ===*
+        # xmlcutlist_urls = (
+        #     f"https://webcatalog-archives.circle.ms/c83/xmlcutlist/day2page{i:04d}.xml" 
+        #     for i in range(1, 183 + 1)
+        # )
+        # for i, url in enumerate(xmlcutlist_urls):
+        #     await fetcher.fetch(
+        #         url,
+        #         onreq_xmlcutlist,
+        #         onerr
+        #     )
 
-        # === Day 3 ===
-        if False:
-            xmlcutlist_urls = (
-                f"https://webcatalog-archives.circle.ms/c83/xmlcutlist/day3page{i:04d}.xml" 
-                # for i in range(1, 180 + 1)
-                for i in range(1, 115 + 1)
-            )
-            for i, url in enumerate(xmlcutlist_urls):
-                await fetcher.fetch(
-                    url,
-                    onreq_xmlcutlist,
-                    onerr
-                )
-            
+        # # === Day 3 ===*
+        # xmlcutlist_urls = (
+        #     f"https://webcatalog-archives.circle.ms/c83/xmlcutlist/day3page{i:04d}.xml" 
+        #     for i in range(1, 180 + 1)
+        # )
+        # for i, url in enumerate(xmlcutlist_urls):
+        #     await fetcher.fetch(
+        #         url,
+        #         onreq_xmlcutlist,
+        #         onerr
+        #     )
+        
         await fetcher.wait_and_close()
 
     asyncio.run(c83_main())

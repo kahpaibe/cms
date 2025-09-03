@@ -7,7 +7,8 @@ from pathlib import Path
 from bs4 import Tag
 from kahscrape.kahscrape import FetcherABC
 from aiohttp import ClientResponse
-import re
+from cms_skip import KahSkipManager
+from typing import Optional
 
 def redirect_url(url: str) -> str:
     """Replace given url to take into account manually-defined new urls"""
@@ -58,7 +59,7 @@ class KahLogger(logging.Logger):
         self.addHandler(file_handler)
         self.addHandler(console_handler)
 
-async def callback_image_save(fetcher: FetcherABC, resp: ClientResponse, data: bytes, logger: KahLogger, save_file_path: Path):
+async def callback_image_save(fetcher: FetcherABC, resp: ClientResponse, data: bytes, logger: KahLogger, save_file_path: Path, skipper: Optional[KahSkipManager] = None):
     """For cutlist xml pages"""
     logger.info(f"Successfully fetched image {resp.url}: {len(data)=}")
     
@@ -67,6 +68,8 @@ async def callback_image_save(fetcher: FetcherABC, resp: ClientResponse, data: b
         await f.write(data)
     
     logger.debug(f"Saved image to {save_file_path}")
+    if skipper: # Notify skipper of successful download
+        skipper.mark_url_as_downloaded(str(resp.url))
 
 def decode_if_possible(data: bytes) -> str:
     try:
