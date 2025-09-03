@@ -65,6 +65,7 @@ async def onerr(
 async def onreq_xmlcircle(fetcher: FetcherABC, resp: ClientResponse, data: bytes):
     """For circle xml pages"""
     LOGGER.info(f"Successfully fetched {resp.url}:\n\t{data[:100].replace(b'\n', b'')}...")
+    skipper.mark_url_as_downloaded(str(resp.url))
     
     circle_id = re.search(r"/([^/]*)\.xml$", str(resp.url))        
     if circle_id is None:
@@ -156,6 +157,7 @@ async def onreq_xmlcircle(fetcher: FetcherABC, resp: ClientResponse, data: bytes
                 resp_buffer, data = out
                 is_external_medium = False
                 await callback_image_save(fetcher, resp_buffer, data, save_file_path=out_path, logger=LOGGER)
+                skipper.mark_url_as_downloaded(_url)
             else: # Add as external medium
                 LOGGER.warning(f"Failed to fetch image {_url} for circle {circle_id=}, skipping saving it.")
         if is_external_medium:
@@ -184,6 +186,7 @@ async def onreq_xmlcircle(fetcher: FetcherABC, resp: ClientResponse, data: bytes
                 resp_buffer, data = out
                 is_external_medium = False
                 await callback_image_save(fetcher, resp_buffer, data, save_file_path=out_path, logger=LOGGER)
+                skipper.mark_url_as_downloaded(_url)
             else: # Add as external medium
                 LOGGER.warning(f"Failed to fetch image {_url} for circle {circle_id=}, skipping saving it.")
         if is_external_medium:
@@ -219,6 +222,7 @@ async def onreq_xmlcircle(fetcher: FetcherABC, resp: ClientResponse, data: bytes
                     is_external_medium = False
                     resp_buffer, data = out
                     await callback_image_save(fetcher, resp_buffer, data, save_file_path=out_path, logger=LOGGER)
+                    skipper.mark_url_as_downloaded(_url)
                 else:
                     LOGGER.warning(f"Failed to fetch image {img_url} for circle {circle_id=}, skipping saving it.")
             if is_external_medium:
@@ -292,6 +296,7 @@ async def onreq_xmlcircle(fetcher: FetcherABC, resp: ClientResponse, data: bytes
 async def onreq_xmlcutlist(fetcher: FetcherABC, resp: ClientResponse, data: bytes):
     """For cutlist xml pages"""
     LOGGER.info(f"Successfully fetched {resp.url}:\n\t{decode_if_possible(data)[:40]}...")
+    skipper.mark_url_as_downloaded(str(resp.url))
     
     day_page = re.search(r"/([^/]*)\.xml$", str(resp.url))        
     if day_page is None:
