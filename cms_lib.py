@@ -61,7 +61,7 @@ class KahLogger(logging.Logger):
 
 async def callback_image_save(fetcher: FetcherABC, resp: ClientResponse, data: bytes, logger: KahLogger, save_file_path: Path, skipper: Optional[KahSkipManager] = None):
     """For cutlist xml pages"""
-    logger.info(f"Successfully fetched image {resp.url}: {len(data)=}")
+    logger.info(f"Successfully fetched image {resp.url} ({len(data)} bytes)")
     
     save_file_path.parent.mkdir(parents=True, exist_ok=True)
     async with aiofiles.open(save_file_path, "wb+") as f:

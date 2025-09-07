@@ -19,7 +19,7 @@ from kahscrape.kahscrape import KahRatelimitedFetcher, FetcherABC
 #  General setup
 # ==================================================================
 
-EVENT: str = "c83"
+EVENT: str = "c87"
 PATH_CURRENT = Path(__file__).parent
 PATH_OUTPUT = PATH_CURRENT / "output"
 PATH_LOG = PATH_OUTPUT / "logger.log"
